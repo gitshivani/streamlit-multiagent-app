@@ -100,95 +100,144 @@ if 'active_provider' not in st.session_state:
     st.session_state.active_provider = None
 
 # Helper functions
-# (... No change in verify_api_key and generate_with_llm ...)
-# Provider configurations
-# (... No change in llm_providers ...)
+def verify_api_key(provider, api_key):
+    try:
+        if provider == "openai":
+            client = openai.OpenAI(api_key=api_key)
+            client.models.list()
+            return True, "OpenAI API key verified successfully"
+        elif provider == "anthropic":
+            client = Anthropic(api_key=api_key)
+            return True, "Anthropic API key format accepted"
+        elif provider == "gemini":
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            return True, "Google Gemini API key format accepted"
+        elif provider in ["cohere", "mistral", "llama", "deepseek"]:
+            if len(api_key) >= 20:
+                return True, f"{provider.capitalize()} API key format accepted"
+            else:
+                return False, f"{provider.capitalize()} API key seems too short"
+        else:
+            return False, "Unknown provider"
+    except Exception as e:
+        return False, f"API verification failed: {str(e)}"
+
+def generate_with_llm(provider, api_key, prompt, model=None):
+    try:
+        if provider == "openai":
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model=model or "gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1024
+            )
+            return True, response.choices[0].message.content
+        elif provider == "anthropic":
+            client = Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model=model or "claude-3-haiku-20240307",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            try:
+                return True, response.content[0].text
+            except (IndexError, AttributeError):
+                return True, str(response)
+        elif provider == "gemini":
+            genai.configure(api_key=api_key)
+            gemini_model = genai.GenerativeModel(model or "gemini-1.5-flash")
+            response = gemini_model.generate_content(prompt)
+            return True, response.text
+        elif provider == "cohere":
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model or "command",
+                "prompt": prompt,
+                "max_tokens": 1024
+            }
+            response = requests.post("https://api.cohere.ai/v1/generate", headers=headers, json=payload)
+            if response.status_code == 200:
+                return True, response.json().get("generations", [{}])[0].get("text", "")
+            else:
+                return False, f"Cohere API error: {response.text}"
+        elif provider == "mistral":
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model or "mistral-small-latest",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 1024
+            }
+            response = requests.post("https://api.mistral.ai/v1/chat/completions", headers=headers, json=payload)
+            if response.status_code == 200:
+                return True, response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            else:
+                return False, f"Mistral API error: {response.text}"
+        elif provider in ["llama", "deepseek"]:
+            return False, f"The {provider} API integration is not available in this demo version. Please use one of the other providers."
+        else:
+            return False, "Unknown provider"
+    except Exception as e:
+        return False, f"Generation failed: {str(e)}"
+
+# ✅ FIX: Define llm_providers BEFORE calling main()
+llm_providers = {
+    "openai": {
+        "name": "OpenAI",
+        "description": "GPT models from OpenAI (GPT-3.5, GPT-4)",
+        "models": {
+            "gpt-3.5-turbo": "GPT-3.5 Turbo (Fast, Affordable)",
+            "gpt-4o": "GPT-4o (Powerful, Multi-modal)",
+            "gpt-4o-mini": "GPT-4o Mini (Balanced)"
+        }
+    },
+    "anthropic": {
+        "name": "Anthropic",
+        "description": "Claude models from Anthropic",
+        "models": {
+            "claude-3-haiku-20240307": "Claude 3 Haiku (Fast)",
+            "claude-3-sonnet-20240229": "Claude 3 Sonnet (Balanced)",
+            "claude-3-opus-20240229": "Claude 3 Opus (Powerful)"
+        }
+    },
+    "gemini": {
+        "name": "Google",
+        "description": "Gemini models from Google",
+        "models": {
+            "gemini-1.5-flash": "Gemini 1.5 Flash (Fast)",
+            "gemini-1.5-pro": "Gemini 1.5 Pro (Balanced)"
+        }
+    },
+    "mistral": {
+        "name": "Mistral AI",
+        "description": "Models from Mistral AI",
+        "models": {
+            "mistral-small-latest": "Mistral Small (Fast)",
+            "mistral-medium-latest": "Mistral Medium (Balanced)",
+            "mistral-large-latest": "Mistral Large (Powerful)"
+        }
+    },
+    "cohere": {
+        "name": "Cohere",
+        "description": "Models from Cohere",
+        "models": {
+            "command": "Command (General)",
+            "command-light": "Command Light (Fast)",
+            "command-r": "Command-R (Robust)"
+        }
+    }
+}
 
 # Main app function
 def main():
-    # Sidebar
-    with st.sidebar:
-        st.markdown("<h2 class='gradient-text'>🚀 Shivani Gupta's Multi-LLM Hub</h2>", unsafe_allow_html=True)
-
-        st.markdown("### 🤖 Select LLM Provider")
-
-        # Provider selection
-        for provider_id, provider_info in llm_providers.items():
-            provider_selected = st.session_state.active_provider == provider_id
-
-            if st.button(
-                f"{provider_info['name']}",
-                key=f"provider_{provider_id}",
-                help=provider_info['description'],
-                use_container_width=True,
-                type="primary" if provider_selected else "secondary"
-            ):
-                st.session_state.active_provider = provider_id
-                st.rerun()
-
-            # Show verification status if available
-            if provider_id in st.session_state.api_verified:
-                if st.session_state.api_verified[provider_id]:
-                    st.success(f"{provider_info['name']} verified ✅")
-                else:
-                    st.error(f"{provider_info['name']} invalid ❌")
-
-        st.markdown("---")
-
-        # If a provider is selected, show API key input and model selection
-        if st.session_state.active_provider:
-            provider = st.session_state.active_provider
-            provider_info = llm_providers[provider]
-
-            st.markdown(f"### {provider_info['name']} Configuration")
-
-            # API Key input
-            api_key = st.text_input(
-                f"{provider_info['name']} API Key",
-                type="password",
-                key=f"api_key_{provider}"
-            )
-
-            # Verify button
-            if api_key:
-                if st.button("Verify API Key", key=f"verify_{provider}"):
-                    with st.spinner("Verifying API key..."):
-                        is_valid, message = verify_api_key(provider, api_key)
-                        if is_valid:
-                            st.session_state.api_verified[provider] = True
-                            st.success(message)
-                        else:
-                            st.session_state.api_verified[provider] = False
-                            st.error(message)
-
-            # Model selection if provider is verified
-            if provider in st.session_state.api_verified and st.session_state.api_verified[provider]:
-                st.markdown("### Model Selection")
-
-                selected_model = st.selectbox(
-                    "Choose Model",
-                    options=list(provider_info["models"].keys()),
-                    format_func=lambda x: provider_info["models"][x],
-                    key=f"model_{provider}"
-                )
-
-                # Display model info
-                st.info(provider_info["models"][selected_model])
-
-        st.markdown("---")
-        st.markdown("### About")
-        st.markdown("""
-        This application was created by **Shivani Gupta** to explore the capabilities of various LLM providers
-        for story generation, text summarization, and translation tasks.
-        """)
-        st.markdown("Built with Streamlit & Python 💻")
-
-    # Main content
-    st.markdown("<h1 class='gradient-text'>Welcome to Shivani’s AI Hub 🚀</h1>", unsafe_allow_html=True)
-    st.markdown("Generate creative stories, summarize long text, and translate between languages using various AI models!")
-
-    # (... rest of your unchanged code for tabs and functions ...)
-    # Place entire Story Generator / Summarizer / Translator tab code here — unchanged
+    # (... your unchanged main() implementation ...)
+    pass  # ← Replace with your main() logic
 
 if __name__ == "__main__":
     main()
